@@ -9,6 +9,7 @@ type DayEntry = {
   pm: string;
   social: string;
   admin: string;
+  status: "" | "S" | "H";
 };
 
 type HoursField = keyof Omit<DayEntry, "day">;
@@ -41,6 +42,7 @@ function generateDays(monthStr: string): DayEntry[] {
     pm: "",
     social: "",
     admin: "",
+    status: "",
   }));
 }
 
@@ -102,6 +104,7 @@ export default function TimesheetPage() {
   const inputRefs = React.useRef<Record<string, HTMLInputElement | null>>({});
   const tableContainerRef = React.useRef<HTMLDivElement | null>(null);
   const isShiftMouseDownRef = React.useRef(false);
+  const isRightClickInsideSelectionRef = React.useRef(false);
 
   const handleCellClick = (
     e: React.MouseEvent<HTMLInputElement>,
@@ -135,9 +138,11 @@ export default function TimesheetPage() {
   };
 
   const handleCellFocus = (rowIndex: number, field: HoursField) => {
-    if (isShiftMouseDownRef.current) {
+    if (isShiftMouseDownRef.current || isRightClickInsideSelectionRef.current) {
+      // Don't change selection in these cases
       return;
     }
+
     setSelection({
       field,
       startRow: rowIndex,
@@ -255,13 +260,31 @@ export default function TimesheetPage() {
     rowIndex: number,
     field: HoursField
   ) => {
-    // If we start a click with Shift held, remember that
+    const isRightButton = e.button === 2; // 0 = left, 2 = right
+
+    const isInCurrentSelection =
+      selection &&
+      selection.field === field &&
+      rowIndex >= Math.min(selection.startRow, selection.endRow) &&
+      rowIndex <= Math.max(selection.startRow, selection.endRow);
+
+    // Right-click inside existing selection:
+    // keep the selection and remember this so onFocus doesn't reset it.
+    if (isRightButton && isInCurrentSelection) {
+      isRightClickInsideSelectionRef.current = true;
+      return;
+    }
+
+    // Any other mouse down should clear that flag
+    isRightClickInsideSelectionRef.current = false;
+
+    // Track Shift for Shift+click range selection
     isShiftMouseDownRef.current = e.shiftKey;
   };
 
   const handleCellMouseUp = () => {
-    // Reset after mouse interaction
     isShiftMouseDownRef.current = false;
+    isRightClickInsideSelectionRef.current = false;
   };
 
   // Recalculate days when month changes
@@ -282,6 +305,14 @@ export default function TimesheetPage() {
     setDays((prev) => {
       const copy = [...prev];
       copy[index] = { ...copy[index], [field]: value };
+      return copy;
+    });
+  };
+
+  const handleStatusChange = (index: number, value: "" | "S" | "H") => {
+    setDays((prev) => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], status: value };
       return copy;
     });
   };
@@ -361,6 +392,7 @@ export default function TimesheetPage() {
         pm: parseHours(d.pm),
         social: parseHours(d.social),
         admin: parseHours(d.admin),
+        status: d.status,
       })),
     };
 
@@ -506,7 +538,8 @@ export default function TimesheetPage() {
                 <thead>
                   <tr className="bg-gray-100">
                     <th className="border px-2 py-1 text-left">Day</th>
-                    <th className="border px-2 py-1 text-left">Weekday</th>{" "}
+                    <th className="border px-2 py-1 text-left">Weekday</th>
+                    <th className="border px-2 py-1 text-left">Status (S/H)</th>
                     <th className="border px-2 py-1 text-right">AM hours</th>
                     <th className="border px-2 py-1 text-right">PM hours</th>
                     <th className="border px-2 py-1 text-right">
@@ -532,6 +565,23 @@ export default function TimesheetPage() {
                         <td className="border px-2 py-1">{d.day}</td>
                         <td className="border px-2 py-1">
                           {getWeekdayName(month, d.day)}
+                        </td>
+
+                        <td className="border px-2 py-1">
+                          <select
+                            value={d.status}
+                            onChange={(e) =>
+                              handleStatusChange(
+                                idx,
+                                e.target.value as "" | "S" | "H"
+                              )
+                            }
+                            className="w-full border rounded px-1 py-0.5 text-xs"
+                          >
+                            <option value="">–</option>
+                            <option value="S">S</option>
+                            <option value="H">H</option>
+                          </select>
                         </td>
 
                         {/* AM */}
