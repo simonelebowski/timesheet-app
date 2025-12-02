@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 import { createLoginCode } from "@/app/lib/loginCodes";
+import { prisma } from "@/app/lib/db";
 
 export const runtime = "nodejs";
 
@@ -41,11 +42,26 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const email = body.email?.trim();
+  const email = body.email?.trim().toLowerCase();
   if (!email || !email.includes("@")) {
     return NextResponse.json(
       { message: "A valid email is required." },
       { status: 400 }
+    );
+  }
+
+  // 🔑 NEW: check if this email belongs to an active user
+  const user = await prisma.user.findUnique({
+    where: { email },
+  });
+
+  if (!user || !user.active || !user.canSubmitTimesheet) {
+    return NextResponse.json(
+      {
+        message:
+          "This email is not registered for the timesheet system. Please contact the administrator.",
+      },
+      { status: 403 }
     );
   }
 
@@ -55,8 +71,12 @@ export async function POST(req: NextRequest) {
     await transporter.sendMail({
       from: FROM_EMAIL,
       to: email,
-      subject: "Your login code",
-      text: `Your login code is: ${code}\n\nIt will expire in 10 minutes.`,
+      subject: "Your login code for CES Worthing timesheets",
+      text: `Hi ${teacher.name},
+
+Your login code for the CES Worthing timesheet app is: ${code}
+
+This code will expire in 10 minutes. If you didn’t request it, you can ignore this email.`,
     });
   } catch (err) {
     console.error("[request-code] Error sending email:", err);
