@@ -46,26 +46,46 @@ function formatMonthLabel(monthStr: string): string {
  * - OUTLOOK_EMAIL
  * - OUTLOOK_PASSWORD
  */
-const OUTLOOK_EMAIL = process.env.OUTLOOK_EMAIL;
-const OUTLOOK_PASSWORD = process.env.OUTLOOK_PASSWORD;
+// const OUTLOOK_EMAIL = process.env.OUTLOOK_EMAIL;
+// const OUTLOOK_PASSWORD = process.env.OUTLOOK_PASSWORD;
+// const TIMESHEET_RECIPIENT = process.env.TIMESHEET_RECIPIENT;
+// const FROM_EMAIL = process.env.FROM_EMAIL || OUTLOOK_EMAIL;
+
+const SMTP_HOST = process.env.SMTP_HOST;
+const SMTP_PORT = process.env.SMTP_PORT
+  ? Number(process.env.SMTP_PORT)
+  : 587;
+const SMTP_SECURE = process.env.SMTP_SECURE === "true"; // false for Gmail+587
+const SMTP_USER = process.env.SMTP_USER;
+const SMTP_PASS = process.env.SMTP_PASS;
 const TIMESHEET_RECIPIENT = process.env.TIMESHEET_RECIPIENT;
-const FROM_EMAIL = process.env.FROM_EMAIL || OUTLOOK_EMAIL;
+const FROM_EMAIL = process.env.FROM_EMAIL || SMTP_USER;
 
 // Log if something is missing when the module loads (server console)
-if (!OUTLOOK_EMAIL || !OUTLOOK_PASSWORD) {
-  console.error("[submit-timesheet] Missing OUTLOOK_EMAIL or OUTLOOK_PASSWORD env vars");
-}
-if (!TIMESHEET_RECIPIENT) {
-  console.error("[submit-timesheet] Missing TIMESHEET_RECIPIENT env var");
-}
+// if (!OUTLOOK_EMAIL || !OUTLOOK_PASSWORD) {
+//   console.error("[submit-timesheet] Missing OUTLOOK_EMAIL or OUTLOOK_PASSWORD env vars");
+// }
+// if (!TIMESHEET_RECIPIENT) {
+//   console.error("[submit-timesheet] Missing TIMESHEET_RECIPIENT env var");
+// }
+
+// const transporter = nodemailer.createTransport({
+//   host: "smtp-mail.outlook.com",
+//   port: 587,
+//   secure: false, // STARTTLS
+//   auth: {
+//     user: OUTLOOK_EMAIL,
+//     pass: OUTLOOK_PASSWORD,
+//   },
+// });
 
 const transporter = nodemailer.createTransport({
-  host: "smtp-mail.outlook.com",
-  port: 587,
-  secure: false, // STARTTLS
+  host: SMTP_HOST,
+  port: SMTP_PORT,
+  secure: SMTP_SECURE, // false → STARTTLS
   auth: {
-    user: OUTLOOK_EMAIL,
-    pass: OUTLOOK_PASSWORD,
+    user: SMTP_USER,
+    pass: SMTP_PASS,
   },
 });
 
@@ -164,49 +184,65 @@ export async function POST(req: NextRequest) {
     days: body.days,
   };
 
-  if (!OUTLOOK_EMAIL || !OUTLOOK_PASSWORD || !TIMESHEET_RECIPIENT || !FROM_EMAIL) {
-    console.error("[submit-timesheet] Email configuration incomplete", {
-      OUTLOOK_EMAIL: !!OUTLOOK_EMAIL,
-      OUTLOOK_PASSWORD: !!OUTLOOK_PASSWORD,
-      TIMESHEET_RECIPIENT: !!TIMESHEET_RECIPIENT,
-      FROM_EMAIL: !!FROM_EMAIL,
-    });
+if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS || !TIMESHEET_RECIPIENT || !FROM_EMAIL) {
+  console.error("[submit-timesheet] Email configuration incomplete", {
+    SMTP_HOST: !!SMTP_HOST,
+    SMTP_USER: !!SMTP_USER,
+    SMTP_PASS: !!SMTP_PASS,
+    TIMESHEET_RECIPIENT: !!TIMESHEET_RECIPIENT,
+    FROM_EMAIL: !!FROM_EMAIL,
+  });
 
-    return NextResponse.json(
-      {
-        message:
-          "Server email configuration is incomplete. Please contact the administrator.",
-      },
-      { status: 500 }
-    );
-  }
+  return NextResponse.json(
+    {
+      message:
+        "Server email configuration is incomplete. Please contact the administrator.",
+    },
+    { status: 500 }
+  );
+}
 
-  const monthLabel = formatMonthLabel(body.month);
+const monthLabel = formatMonthLabel(body.month);
 
-  const mailOptions = {
-    from: FROM_EMAIL,
-    to: TIMESHEET_RECIPIENT,
-    subject: `Timesheet submission - ${canonicalPayload.teacherName} - ${monthLabel}`,
-    text: JSON.stringify(canonicalPayload, null, 2),
-    replyTo: canonicalPayload.teacherEmail,
-  };
+// const mailOptions = {
+//   from: FROM_EMAIL,
+//   to: TIMESHEET_RECIPIENT,
+//   subject: `Timesheet submission - ${canonicalPayload.teacherName} - ${monthLabel}`,
+//   text: JSON.stringify(canonicalPayload, null, 2),
+//   replyTo: canonicalPayload.teacherEmail, // replies go to the teacher
+// };
 
-  try {
-    const info = await transporter.sendMail(mailOptions);
-    console.log("[submit-timesheet] Email sent:", info.messageId);
-  } catch (error: any) {
-    console.error(
-      "[submit-timesheet] Error sending timesheet email:",
-      error?.message || error
-    );
-    return NextResponse.json(
-      {
-        message: "Failed to send timesheet email.",
-        // error: error?.message || String(error), // uncomment for debugging if needed
-      },
-      { status: 500 }
-    );
-  }
+const jsonBlock = JSON.stringify(canonicalPayload, null, 2);
 
-  return NextResponse.json({ success: true });
+const mailOptions = {
+  from: FROM_EMAIL,
+  to: TIMESHEET_RECIPIENT,
+  subject: `Timesheet submission - ${canonicalPayload.teacherName} - ${monthLabel}`,
+  text:
+    `A new timesheet has been submitted.\n\n` +
+    `Teacher: ${canonicalPayload.teacherName}\n` +
+    `Email: ${canonicalPayload.teacherEmail}\n` +
+    `Month: ${monthLabel}\n` +
+    `Total hours: ${canonicalPayload.totalHours}\n\n` +
+    `Full JSON payload:\n` +
+    jsonBlock,
+  replyTo: canonicalPayload.teacherEmail,
+};
+
+
+try {
+  const info = await transporter.sendMail(mailOptions);
+  console.log("[submit-timesheet] Email sent:", info.messageId);
+} catch (error: any) {
+  console.error(
+    "[submit-timesheet] Error sending timesheet email:",
+    error?.message || error
+  );
+  return NextResponse.json(
+    { message: "Failed to send timesheet email." },
+    { status: 500 }
+  );
+}
+
+return NextResponse.json({ success: true });
 }

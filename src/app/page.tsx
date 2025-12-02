@@ -107,6 +107,86 @@ export default function TimesheetPage() {
   const isShiftMouseDownRef = React.useRef(false);
   const isRightClickInsideSelectionRef = React.useRef(false);
 
+  // LOGIN STATES AND FUNCTIONS----------------------------------------------------------------------------------------------------
+    const [loggedInEmail, setLoggedInEmail] = useState<string | null>(null);
+  const [loginStep, setLoginStep] = useState<"enterEmail" | "enterCode" | "loggedIn">("enterEmail");
+  const [loginEmailInput, setLoginEmailInput] = useState("");
+  const [loginCodeInput, setLoginCodeInput] = useState("");
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginLoading, setLoginLoading] = useState(false);
+
+  async function handleRequestCode(e: React.FormEvent) {
+    e.preventDefault();
+    setLoginError(null);
+
+    const email = loginEmailInput.trim();
+    if (!email || !email.includes("@")) {
+      setLoginError("Please enter a valid email address.");
+      return;
+    }
+
+    setLoginLoading(true);
+    try {
+      const res = await fetch("/api/auth/request-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        setLoginError(data?.message || "Failed to send login code.");
+      } else {
+        setLoginStep("enterCode");
+        setTeacherEmail(email); // prefill timesheet email
+      }
+    } catch (err) {
+      console.error(err);
+      setLoginError("Unexpected error while sending login code.");
+    } finally {
+      setLoginLoading(false);
+    }
+  }
+
+  async function handleVerifyCode(e: React.FormEvent) {
+    e.preventDefault();
+    setLoginError(null);
+
+    const email = loginEmailInput.trim();
+    const code = loginCodeInput.trim();
+
+    if (!email || !code) {
+      setLoginError("Email and code are required.");
+      return;
+    }
+
+    setLoginLoading(true);
+    try {
+      const res = await fetch("/api/auth/verify-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, code }),
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        setLoginError(data?.message || "Invalid code.");
+      } else {
+        setLoggedInEmail(email);
+        setLoginStep("loggedIn");
+        setTeacherEmail(email);
+      }
+    } catch (err) {
+      console.error(err);
+      setLoginError("Unexpected error while verifying code.");
+    } finally {
+      setLoginLoading(false);
+    }
+  }
+// ----------------------------------------------------------------------------------------------------------------------------------
+
   const handleCellClick = (
     e: React.MouseEvent<HTMLInputElement>,
     rowIndex: number,
@@ -431,7 +511,101 @@ export default function TimesheetPage() {
   return (
     <main className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
       <div className="w-full max-w-4xl bg-white shadow-md rounded-lg p-6 space-y-4">
-        <h1 className="text-2xl font-semibold mb-4">Monthly Timesheet</h1>
+        {/* Login box */}
+        {loginStep !== "loggedIn" && (
+          <div className="mb-4 rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-sm">
+            <h2 className="text-base font-semibold mb-2">Teacher login</h2>
+
+            {loginStep === "enterEmail" && (
+              <form onSubmit={handleRequestCode} className="space-y-2">
+                <div>
+                  <label className="block text-xs font-medium mb-1">
+                    Email address
+                  </label>
+                  <input
+                    type="email"
+                    value={loginEmailInput}
+                    onChange={(e) => setLoginEmailInput(e.target.value)}
+                    className="w-full border rounded px-3 py-2 text-sm"
+                    placeholder="you@example.com"
+                    required
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={loginLoading}
+                  className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm disabled:opacity-60"
+                >
+                  {loginLoading ? "Sending code..." : "Send login code"}
+                </button>
+              </form>
+            )}
+
+            {loginStep === "enterCode" && (
+              <form onSubmit={handleVerifyCode} className="space-y-2">
+                <p className="text-xs text-gray-700">
+                  We’ve emailed a 6-digit login code to{" "}
+                  <span className="font-semibold">{loginEmailInput}</span>.
+                  Enter it below to continue.
+                </p>
+                <div>
+                  <label className="block text-xs font-medium mb-1">
+                    Login code
+                  </label>
+                  <input
+                    type="text"
+                    value={loginCodeInput}
+                    onChange={(e) => setLoginCodeInput(e.target.value)}
+                    className="w-full border rounded px-3 py-2 text-sm"
+                    placeholder="123456"
+                    required
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="submit"
+                    disabled={loginLoading}
+                    className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm disabled:opacity-60"
+                  >
+                    {loginLoading ? "Verifying..." : "Verify code"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoginStep("enterEmail");
+                      setLoginCodeInput("");
+                    }}
+                    className="text-xs text-blue-700 underline"
+                  >
+                    Change email
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {loginError && (
+              <div className="mt-2 text-xs text-red-700">
+                {loginError}
+              </div>
+            )}
+          </div>
+        )}
+
+        {loginStep === "loggedIn" && loggedInEmail && (
+          <div className="mb-4 rounded-md border border-green-100 bg-green-50 px-4 py-3 text-xs text-green-900">
+            Logged in as <span className="font-semibold">{loggedInEmail}</span>
+          </div>
+        )}
+
+
+
+        {loginStep !== "loggedIn" ? (
+          <p className="text-sm text-gray-600">
+            Please log in with your email above to submit your timesheet.
+          </p>
+        ) : (
+          <>
+            <h1 className="text-2xl font-semibold mb-4">Monthly Timesheet</h1>
 
         {/* Instructions box */}
         <div className="mb-4 rounded-md border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
@@ -733,6 +907,8 @@ export default function TimesheetPage() {
             </div>
           )}
         </form>
+          </>
+        )}
       </div>
     </main>
   );
