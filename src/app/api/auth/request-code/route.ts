@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 import { createLoginCode } from "@/app/lib/loginCodes";
-import { prisma } from "@/app/lib/db";
+import { findUserByEmail } from "@/app/lib/users";
 
 export const runtime = "nodejs";
 
@@ -50,11 +50,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 🔑 NEW: check if this email belongs to an active user
-  const user = await prisma.user.findUnique({
-    where: { email },
-  });
-
+  // ✅ Only allow known users
+  const user = findUserByEmail(email);
   if (!user || !user.active || !user.canSubmitTimesheet) {
     return NextResponse.json(
       {
@@ -72,7 +69,7 @@ export async function POST(req: NextRequest) {
       from: FROM_EMAIL,
       to: email,
       subject: "Your login code for CES Worthing timesheets",
-      text: `Hi ${teacher.name},
+      text: `Hi ${user.name},
 
 Your login code for the CES Worthing timesheet app is: ${code}
 

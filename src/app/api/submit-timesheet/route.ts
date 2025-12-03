@@ -1,9 +1,8 @@
-// app/api/submit-timesheet/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
-import { prisma } from "@/app/lib/db";
+import { findUserByEmail } from "@/app/lib/users";
 
-export const runtime = "nodejs"; // ensure Node.js runtime
+export const runtime = "nodejs";
 
 type DayEntry = {
   day: number;
@@ -11,7 +10,7 @@ type DayEntry = {
   pm: number;
   social: number;
   admin: number;
-  status?: "" | "S" | "H"; // optional, since the server doesn’t use it
+  status?: "" | "S" | "H";
 };
 
 type TimesheetPayload = {
@@ -41,16 +40,7 @@ function formatMonthLabel(monthStr: string): string {
   return date.toLocaleString("en-GB", { month: "long", year: "numeric" });
 }
 
-/**
- * SINGLE Outlook transporter, reused for all requests.
- * Make sure these exist in .env.local:
- * - OUTLOOK_EMAIL
- * - OUTLOOK_PASSWORD
- */
-// const OUTLOOK_EMAIL = process.env.OUTLOOK_EMAIL;
-// const OUTLOOK_PASSWORD = process.env.OUTLOOK_PASSWORD;
-// const TIMESHEET_RECIPIENT = process.env.TIMESHEET_RECIPIENT;
-// const FROM_EMAIL = process.env.FROM_EMAIL || OUTLOOK_EMAIL;
+// ---- SMTP / email config ----
 
 const SMTP_HOST = process.env.SMTP_HOST;
 const SMTP_PORT = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587;
@@ -60,197 +50,18 @@ const SMTP_PASS = process.env.SMTP_PASS;
 const TIMESHEET_RECIPIENT = process.env.TIMESHEET_RECIPIENT;
 const FROM_EMAIL = process.env.FROM_EMAIL || SMTP_USER;
 
-// Log if something is missing when the module loads (server console)
-// if (!OUTLOOK_EMAIL || !OUTLOOK_PASSWORD) {
-//   console.error("[submit-timesheet] Missing OUTLOOK_EMAIL or OUTLOOK_PASSWORD env vars");
-// }
-// if (!TIMESHEET_RECIPIENT) {
-//   console.error("[submit-timesheet] Missing TIMESHEET_RECIPIENT env var");
-// }
-
-// const transporter = nodemailer.createTransport({
-//   host: "smtp-mail.outlook.com",
-//   port: 587,
-//   secure: false, // STARTTLS
-//   auth: {
-//     user: OUTLOOK_EMAIL,
-//     pass: OUTLOOK_PASSWORD,
-//   },
-// });
-
 const transporter = nodemailer.createTransport({
   host: SMTP_HOST,
   port: SMTP_PORT,
-  secure: SMTP_SECURE, // false → STARTTLS
+  secure: SMTP_SECURE,
   auth: {
     user: SMTP_USER,
     pass: SMTP_PASS,
   },
 });
 
-// export async function POST(req: NextRequest) {
-//   let body: TimesheetPayload;
-
-//   try {
-//     body = (await req.json()) as TimesheetPayload;
-//   } catch {
-//     return NextResponse.json(
-//       { message: "Invalid JSON payload." },
-//       { status: 400 }
-//     );
-//   }
-
-//   // ---- Validation ----
-//   if (!body.teacherName || typeof body.teacherName !== "string") {
-//     return NextResponse.json(
-//       { message: "teacherName is required." },
-//       { status: 400 }
-//     );
-//   }
-
-//   if (!body.teacherEmail || typeof body.teacherEmail !== "string") {
-//     return NextResponse.json(
-//       { message: "teacherEmail is required." },
-//       { status: 400 }
-//     );
-//   }
-
-//   if (!body.month || typeof body.month !== "string") {
-//     return NextResponse.json(
-//       { message: "month is required." },
-//       { status: 400 }
-//     );
-//   }
-
-//   if (!Array.isArray(body.days) || body.days.length === 0) {
-//     return NextResponse.json(
-//       { message: "days array is required." },
-//       { status: 400 }
-//     );
-//   }
-
-//   const expectedDays = getDaysInMonth(body.month);
-//   if (body.days.length !== expectedDays) {
-//     return NextResponse.json(
-//       {
-//         message: `days array length (${body.days.length}) does not match the selected month (${expectedDays} days).`,
-//       },
-//       { status: 400 }
-//     );
-//   }
-
-//   let totalHours = 0;
-//   for (const day of body.days) {
-//     if (typeof day.day !== "number" || day.day < 1 || day.day > expectedDays) {
-//       return NextResponse.json(
-//         { message: "Each day entry must have a valid day number." },
-//         { status: 400 }
-//       );
-//     }
-
-//     const fields: (keyof Omit<DayEntry, "day" | "status">)[] = [
-//       "am",
-//       "pm",
-//       "social",
-//       "admin",
-//     ];
-
-//     for (const field of fields) {
-//       const value = day[field];
-//       if (typeof value !== "number" || Number.isNaN(value) || value < 0) {
-//         return NextResponse.json(
-//           {
-//             message: `Invalid value for ${field} on day ${day.day}. Must be a non-negative number.`,
-//           },
-//           { status: 400 }
-//         );
-//       }
-//     }
-
-//     totalHours += day.am + day.pm + day.social + day.admin;
-//   }
-
-//   const canonicalPayload = {
-//     teacherName: body.teacherName.trim(),
-//     teacherEmail: body.teacherEmail.trim(),
-//     month: body.month,
-//     notes: body.notes ?? "",
-//     totalHours,
-//     days: body.days,
-//   };
-
-//   if (
-//     !SMTP_HOST ||
-//     !SMTP_USER ||
-//     !SMTP_PASS ||
-//     !TIMESHEET_RECIPIENT ||
-//     !FROM_EMAIL
-//   ) {
-//     console.error("[submit-timesheet] Email configuration incomplete", {
-//       SMTP_HOST: !!SMTP_HOST,
-//       SMTP_USER: !!SMTP_USER,
-//       SMTP_PASS: !!SMTP_PASS,
-//       TIMESHEET_RECIPIENT: !!TIMESHEET_RECIPIENT,
-//       FROM_EMAIL: !!FROM_EMAIL,
-//     });
-
-//     return NextResponse.json(
-//       {
-//         message:
-//           "Server email configuration is incomplete. Please contact the administrator.",
-//       },
-//       { status: 500 }
-//     );
-//   }
-
-//   const monthLabel = formatMonthLabel(body.month);
-
-//   // const mailOptions = {
-//   //   from: FROM_EMAIL,
-//   //   to: TIMESHEET_RECIPIENT,
-//   //   subject: `Timesheet submission - ${canonicalPayload.teacherName} - ${monthLabel}`,
-//   //   text: JSON.stringify(canonicalPayload, null, 2),
-//   //   replyTo: canonicalPayload.teacherEmail, // replies go to the teacher
-//   // };
-
-//   const jsonBlock = JSON.stringify(canonicalPayload, null, 2);
-
-//   const mailOptions = {
-//     from: FROM_EMAIL,
-//     to: TIMESHEET_RECIPIENT,
-//     subject: `Timesheet submission - ${canonicalPayload.teacherName} - ${monthLabel}`,
-//     text:
-//       `A new timesheet has been submitted.\n\n` +
-//       `Teacher: ${canonicalPayload.teacherName}\n` +
-//       `Email: ${canonicalPayload.teacherEmail}\n` +
-//       `Month: ${monthLabel}\n` +
-//       `Total hours: ${canonicalPayload.totalHours}\n\n` +
-//       `Full JSON payload:\n` +
-//       jsonBlock,
-//     replyTo: canonicalPayload.teacherEmail,
-//   };
-
-//   try {
-//     const info = await transporter.sendMail(mailOptions);
-//     console.log("[submit-timesheet] Email sent:", info.messageId);
-//   } catch (error: any) {
-//     console.error(
-//       "[submit-timesheet] Error sending timesheet email:",
-//       error?.message || error
-//     );
-//     return NextResponse.json(
-//       { message: "Failed to send timesheet email." },
-//       { status: 500 }
-//     );
-//   }
-
-//   return NextResponse.json({ success: true });
-// }
-
 export async function POST(req: NextRequest) {
-  // 1. (later) read + verify session cookie, get sessionEmail
-
-  // 2. parse JSON as you already do
+  // Parse JSON
   let body: TimesheetPayload;
   try {
     body = (await req.json()) as TimesheetPayload;
@@ -261,12 +72,48 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 3. You can enforce teacher comes from DB:
-  const userEmail = body.teacherEmail.trim().toLowerCase();
+  // Basic validation
+  if (!body.teacherName || typeof body.teacherName !== "string") {
+    return NextResponse.json(
+      { message: "teacherName is required." },
+      { status: 400 }
+    );
+  }
 
-  const user = await prisma.user.findUnique({
-    where: { email: userEmail },
-  });
+  if (!body.teacherEmail || typeof body.teacherEmail !== "string") {
+    return NextResponse.json(
+      { message: "teacherEmail is required." },
+      { status: 400 }
+    );
+  }
+
+  if (!body.month || typeof body.month !== "string") {
+    return NextResponse.json(
+      { message: "month is required." },
+      { status: 400 }
+    );
+  }
+
+  if (!Array.isArray(body.days) || body.days.length === 0) {
+    return NextResponse.json(
+      { message: "days array is required." },
+      { status: 400 }
+    );
+  }
+
+  const expectedDays = getDaysInMonth(body.month);
+  if (body.days.length !== expectedDays) {
+    return NextResponse.json(
+      {
+        message: `days array length (${body.days.length}) does not match the selected month (${expectedDays} days).`,
+      },
+      { status: 400 }
+    );
+  }
+
+  // Check user is allowed (from in-code users list)
+  const userEmail = body.teacherEmail.trim().toLowerCase();
+  const user = findUserByEmail(userEmail);
 
   if (!user || !user.active || !user.canSubmitTimesheet) {
     return NextResponse.json(
@@ -275,53 +122,105 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 4. Your existing validation of days, month, etc.
-  // ...
-  // you end up with:
+  // Validate days and recompute total hours
+  let totalHours = 0;
+
+  for (const day of body.days) {
+    if (typeof day.day !== "number" || day.day < 1 || day.day > expectedDays) {
+      return NextResponse.json(
+        { message: "Each day entry must have a valid day number." },
+        { status: 400 }
+      );
+    }
+
+    const fields: (keyof Omit<DayEntry, "day" | "status">)[] = [
+      "am",
+      "pm",
+      "social",
+      "admin",
+    ];
+
+    for (const field of fields) {
+      const value = day[field];
+      if (typeof value !== "number" || Number.isNaN(value) || value < 0) {
+        return NextResponse.json(
+          {
+            message: `Invalid value for ${field} on day ${day.day}. Must be a non-negative number.`,
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    totalHours += day.am + day.pm + day.social + day.admin;
+  }
+
   const canonicalPayload = {
     teacherName: body.teacherName.trim(),
-    teacherEmail,
+    teacherEmail: userEmail,
     month: body.month,
     notes: body.notes ?? "",
     totalHours,
     days: body.days,
+    hourlyRate: user.hourlyRate, // optional, but nice to have
   };
 
-  // 5. Save to DB (create or update per teacher+month)
-  try {
-    const timesheet = await prisma.timesheet.upsert({
-      where: {
-        userId_month: {
-          userId: user.id,
-          month: body.month,
-        },
-      },
-      update: {
-        totalHours,
-        notes: canonicalPayload.notes,
-        payload: canonicalPayload,
-      },
-      create: {
-        userId: user.id,
-        month: body.month,
-        totalHours,
-        notes: canonicalPayload.notes,
-        payload: canonicalPayload,
-      },
+  if (
+    !SMTP_HOST ||
+    !SMTP_USER ||
+    !SMTP_PASS ||
+    !TIMESHEET_RECIPIENT ||
+    !FROM_EMAIL
+  ) {
+    console.error("[submit-timesheet] Email configuration incomplete", {
+      SMTP_HOST: !!SMTP_HOST,
+      SMTP_USER: !!SMTP_USER,
+      SMTP_PASS: !!SMTP_PASS,
+      TIMESHEET_RECIPIENT: !!TIMESHEET_RECIPIENT,
+      FROM_EMAIL: !!FROM_EMAIL,
     });
 
-    console.log("[submit-timesheet] Saved to DB with id", timesheet.id);
-  } catch (err) {
-    console.error("[submit-timesheet] Error saving timesheet:", err);
     return NextResponse.json(
-      { message: "Failed to save timesheet." },
+      {
+        message:
+          "Server email configuration is incomplete. Please contact the administrator.",
+      },
       { status: 500 }
     );
   }
 
-  // 6. Then continue with your existing email-to-registrar logic
-  // (send the JSON to trigger Power Automate)
-  // ...
+  const monthLabel = formatMonthLabel(body.month);
+  const jsonBlock = JSON.stringify(canonicalPayload, null, 2);
+
+  const mailOptions = {
+    from: FROM_EMAIL,
+    to: TIMESHEET_RECIPIENT,
+    subject: `Timesheet submission - ${canonicalPayload.teacherName} - ${monthLabel}`,
+    text:
+      `A new timesheet has been submitted.\n\n` +
+      `Name: ${canonicalPayload.teacherName}\n` +
+      `Email: ${canonicalPayload.teacherEmail}\n` +
+      `Month: ${monthLabel}\n` +
+      `Total hours: ${canonicalPayload.totalHours}\n` +
+      (user.hourlyRate ? `Hourly rate: ${user.hourlyRate}\n` : "") +
+      `\nFull JSON payload:\n` +
+      jsonBlock,
+    replyTo: canonicalPayload.teacherEmail,
+  };
+
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log("[submit-timesheet] Email sent:", info.messageId);
+  } catch (error: any) {
+    console.error(
+      "[submit-timesheet] Error sending timesheet email:",
+      error?.message || error
+    );
+    return NextResponse.json(
+      { message: "Failed to send timesheet email." },
+      { status: 500 }
+    );
+  }
 
   return NextResponse.json({ success: true });
 }
